@@ -58,6 +58,7 @@ class LKFlowNodelet : public nodelet::Nodelet
   image_transport::Subscriber img_sub_;
   image_transport::CameraSubscriber cam_sub_;
   ros::Publisher msg_pub_;
+  ros::Publisher trajectory_pub_;
   ros::ServiceServer initialize_points_service_;
   ros::ServiceServer delete_points_service_;
   ros::ServiceServer toggle_night_mode_service_;
@@ -69,6 +70,8 @@ class LKFlowNodelet : public nodelet::Nodelet
   dynamic_reconfigure::Server<lk_flow::LKFlowConfig> srv;
 
   bool debug_view_;
+  bool publish_trajectory_;
+  int max_trajectory_points_;
   int subscriber_count_;
   ros::Time prev_stamp_;
 
@@ -82,6 +85,7 @@ class LKFlowNodelet : public nodelet::Nodelet
   bool addRemovePt;
   cv::Mat gray, prevGray;
   std::vector<cv::Point2f> points[2];
+  std::vector<std::vector<cv::Point2f> > trajectory_points_;
 
   void reconfigureCallback(lk_flow::LKFlowConfig &new_config, uint32_t level)
   {
@@ -131,6 +135,7 @@ class LKFlowNodelet : public nodelet::Nodelet
     {
       // Convert the image into something opencv can handle.
       cv::Mat image = cv_bridge::toCvShare(msg, msg->encoding)->image;
+      cv::Mat trajectory_image = cv_bridge::toCvShare(msg, msg->encoding)->image;
 
       // Messages
       opencv_apps::FlowArrayStamped flows_msg;
@@ -159,17 +164,31 @@ class LKFlowNodelet : public nodelet::Nodelet
       if( nightMode )
         image = cv::Scalar::all(0);
 
+      ROS_ERROR("Trajectory_points");
+      if((int)trajectory_points_.size() > 0)
+	for(size_t i = 0; i < trajectory_points_.size(); i++)
+	    ROS_ERROR("Trajectory i: %d j: -- tp_size: %d tp[%d]_size: %d ", i,  trajectory_points_.size(), i, trajectory_points_[i].size());
+      //	  for (size_t j = 0; j < trajectory_points_[i].size(); j++)
+      //	    ROS_ERORR("Trajectory i: %d j: %d tp_size: %d tp[%d]_size: %d ", i, j, trajectory_points_.size(), i, trajectory_points_[i].size());
       if( needToInit )
       {
         // automatic initialization
         cv::goodFeaturesToTrack(gray, points[1], MAX_COUNT, 0.01, 10, cv::Mat(), 3, 0, 0.04);
         cv::cornerSubPix(gray, points[1], subPixWinSize, cv::Size(-1,-1), termcrit);
         addRemovePt = false;
+	if(publish_trajectory_){
+	  for (int i = 0; i < points[1].size(); i++){
+	    std::vector<cv::Point2f> tmp_vector;
+	    tmp_vector.push_back(points[1][i]);
+	    trajectory_points_.push_back(tmp_vector);
+	  }
+	}
       }
       else if( !points[0].empty() )
       {
         std::vector<uchar> status;
         std::vector<float> err;
+	std::vector<int> remove_ids;
         if(prevGray.empty())
           gray.copyTo(prevGray);
         cv::calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
@@ -186,9 +205,21 @@ class LKFlowNodelet : public nodelet::Nodelet
             }
           }
 
-          if( !status[i] )
+          if( !status[i] ){
+	    if(publish_trajectory_)
+	      remove_ids.push_back(i);
             continue;
+	  }
 
+
+	  if(publish_trajectory_ && (int)trajectory_points_.size()){
+	    ROS_ERROR("points %d ", points[1].size());
+	    ROS_ERROR("push_back %d %d", i, trajectory_points_[i].size());
+	    trajectory_points_[i].push_back(points[1][i]);
+	    ROS_ERROR("REMoving %d %d", i, trajectory_points_[i].size());
+	    if ((int)trajectory_points_[i].size() > max_trajectory_points_)
+	      trajectory_points_[i].erase(trajectory_points_[i].begin());
+	  }
           points[1][k++] = points[1][i];
           cv::circle( image, points[1][i], 3, cv::Scalar(0,255,0), -1, 8);
           cv::line( image, points[1][i], points[0][i], cv::Scalar(0,255,0), 1, 8, 0);
@@ -204,9 +235,17 @@ class LKFlowNodelet : public nodelet::Nodelet
           flow_msg.velocity = velocity_msg;
           flows_msg.flow.push_back(flow_msg);
         }
+
         points[1].resize(k);
+	if(publish_trajectory_ && (int)trajectory_points_.size()){
+	  for(int i = 0; i < (int)remove_ids.size(); i++){
+	    ROS_ERROR("removing %d", (int)remove_ids[i] - i);
+	    trajectory_points_.erase(trajectory_points_.begin() + (int)remove_ids[i] - i);
+	  }
+	}
       }
 
+      //ROS_ERROR("pub_tra8");
       if( addRemovePt && points[1].size() < (size_t)MAX_COUNT )
         {
           std::vector<cv::Point2f> tmp;
@@ -217,6 +256,7 @@ class LKFlowNodelet : public nodelet::Nodelet
         }
 
       needToInit = false;
+      //ROS_ERROR("pub_tra7");
       if( debug_view_) {
 
         cv::imshow(window_name_, image);
@@ -241,6 +281,24 @@ class LKFlowNodelet : public nodelet::Nodelet
       std::swap(points[1], points[0]);
       cv::swap(prevGray, gray);
 
+      ROS_ERROR("Trajectory_points2");
+      if((int)trajectory_points_.size() > 0)
+	for(size_t i = 0; i < trajectory_points_.size(); i++)
+	    ROS_ERROR("Trajectory i: %d j: -- tp_size: %d tp[%d]_size: %d ", i,  trajectory_points_.size(), i, trajectory_points_[i].size());
+      if(publish_trajectory_){
+	ROS_ERROR("pub_tra3");
+	for(size_t i = 0; i < trajectory_points_.size(); i++){
+	  for(size_t j = 0; j < trajectory_points_[i].size(); j++){
+	    cv::circle( trajectory_image, trajectory_points_[i][j], 3, cv::Scalar(0,255,0), -1, 8);
+	    if (j < ((int)trajectory_points_[i].size() - 2)){
+	      // ROS_ERROR("pub_tra3_33 %d %d %d", j, trajectory_points_[i].size(), trajectory_points_[i].size() - 2);
+	      cv::line( trajectory_image, trajectory_points_[i][j], trajectory_points_[i][j + 1], cv::Scalar(0,255,0), 1, 8, 0);
+	    }
+	  }
+	}
+	sensor_msgs::Image::Ptr trajectory_msg = cv_bridge::CvImage(msg->header, msg->encoding, trajectory_image).toImageMsg();
+	trajectory_pub_.publish(trajectory_msg);
+      }
       // Publish the image.
       sensor_msgs::Image::Ptr out_img = cv_bridge::CvImage(msg->header, msg->encoding, image).toImageMsg();
       img_pub_.publish(out_img);
@@ -250,16 +308,17 @@ class LKFlowNodelet : public nodelet::Nodelet
     {
       NODELET_ERROR("Image processing error: %s %s %s %i", e.err.c_str(), e.func.c_str(), e.file.c_str(), e.line);
     }
-
     prev_stamp_ = msg->header.stamp;
   }
 
   bool initialize_points_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response) {
+    trajectory_points_.clear();
     needToInit = true;
     return true;
   }
 
   bool delete_points_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response) {
+    trajectory_points_.clear();
     points[0].clear();
     points[1].clear();
     return true;
@@ -324,6 +383,8 @@ public:
     local_nh_ = ros::NodeHandle("~");
 
     local_nh_.param("debug_view", debug_view_, false);
+    local_nh_.param("publish_trajectory", publish_trajectory_, false);
+    local_nh_.param("max_trajectory_points", max_trajectory_points_, 10);
     subscriber_count_ = 0;
     prev_stamp_ = ros::Time(0, 0);
 
@@ -338,6 +399,7 @@ public:
     ros::SubscriberStatusCallback msg_connect_cb    = boost::bind(&LKFlowNodelet::msg_connectCb, this, _1);
     ros::SubscriberStatusCallback msg_disconnect_cb = boost::bind(&LKFlowNodelet::msg_disconnectCb, this, _1);
     img_pub_ = image_transport::ImageTransport(local_nh_).advertise("image", 1, img_connect_cb, img_disconnect_cb);
+    trajectory_pub_ = local_nh_.advertise<sensor_msgs::Image>("trajectory", 1, msg_connect_cb, msg_disconnect_cb);
     msg_pub_ = local_nh_.advertise<opencv_apps::FlowArrayStamped>("flows", 1, msg_connect_cb, msg_disconnect_cb);
     initialize_points_service_ = local_nh_.advertiseService("initialize_points", &LKFlowNodelet::initialize_points_cb, this);
     delete_points_service_ = local_nh_.advertiseService("delete_points", &LKFlowNodelet::delete_points_cb, this);
