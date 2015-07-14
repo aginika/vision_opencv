@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(opencv_apps)
 
-find_package(catkin REQUIRED COMPONENTS cv_bridge dynamic_reconfigure message_generation image_transport nodelet roscpp)
+find_package(catkin REQUIRED COMPONENTS cv_bridge dynamic_reconfigure message_generation image_transport nodelet roscpp uuid_msgs unique_id)
 
 find_package(OpenCV REQUIRED)
 if (OpenCV_VERSION VERSION_EQUAL "3")
@@ -71,6 +71,7 @@ add_message_files(
 generate_messages(
   DEPENDENCIES
   geometry_msgs
+  uuid_msgs
 )
 
 catkin_package()

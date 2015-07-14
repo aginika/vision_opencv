@@ -50,6 +50,8 @@
 #include "std_srvs/Empty.h"
 #include "opencv_apps/LKFlowConfig.h"
 #include "opencv_apps/FlowArrayStamped.h"
+#include "uuid_msgs/UniqueID.h"
+#include "unique_id/unique_id.h"
 
 namespace lk_flow {
 class LKFlowNodelet : public nodelet::Nodelet
@@ -86,6 +88,7 @@ class LKFlowNodelet : public nodelet::Nodelet
   cv::Mat gray, prevGray;
   std::vector<cv::Point2f> points[2];
   std::vector<std::vector<cv::Point2f> > trajectory_points_;
+  std::vector<uuid_msgs::UniqueID> uuids_;
 
   void reconfigureCallback(lk_flow::LKFlowConfig &new_config, uint32_t level)
   {
@@ -164,12 +167,6 @@ class LKFlowNodelet : public nodelet::Nodelet
       if( nightMode )
         image = cv::Scalar::all(0);
 
-      ROS_ERROR("Trajectory_points");
-      if((int)trajectory_points_.size() > 0)
-	for(size_t i = 0; i < trajectory_points_.size(); i++)
-	    ROS_ERROR("Trajectory i: %d j: -- tp_size: %d tp[%d]_size: %d ", i,  trajectory_points_.size(), i, trajectory_points_[i].size());
-      //	  for (size_t j = 0; j < trajectory_points_[i].size(); j++)
-      //	    ROS_ERORR("Trajectory i: %d j: %d tp_size: %d tp[%d]_size: %d ", i, j, trajectory_points_.size(), i, trajectory_points_[i].size());
       if( needToInit )
       {
         // automatic initialization
@@ -181,6 +178,8 @@ class LKFlowNodelet : public nodelet::Nodelet
 	    std::vector<cv::Point2f> tmp_vector;
 	    tmp_vector.push_back(points[1][i]);
 	    trajectory_points_.push_back(tmp_vector);
+	    uuid_msgs::UniqueID tmp_id = unique_id::toMsg(unique_id::fromRandom());
+	    uuids_.push_back(tmp_id);
 	  }
 	}
       }
@@ -213,10 +212,7 @@ class LKFlowNodelet : public nodelet::Nodelet
 
 
 	  if(publish_trajectory_ && (int)trajectory_points_.size()){
-	    ROS_ERROR("points %d ", points[1].size());
-	    ROS_ERROR("push_back %d %d", i, trajectory_points_[i].size());
 	    trajectory_points_[i].push_back(points[1][i]);
-	    ROS_ERROR("REMoving %d %d", i, trajectory_points_[i].size());
 	    if ((int)trajectory_points_[i].size() > max_trajectory_points_)
 	      trajectory_points_[i].erase(trajectory_points_[i].begin());
 	  }
@@ -233,19 +229,19 @@ class LKFlowNodelet : public nodelet::Nodelet
           velocity_msg.y = points[1][i].y-points[0][i].y;
           flow_msg.point = point_msg;
           flow_msg.velocity = velocity_msg;
+	  flow_msg.id = uuids_[i];
           flows_msg.flow.push_back(flow_msg);
         }
 
         points[1].resize(k);
 	if(publish_trajectory_ && (int)trajectory_points_.size()){
 	  for(int i = 0; i < (int)remove_ids.size(); i++){
-	    ROS_ERROR("removing %d", (int)remove_ids[i] - i);
 	    trajectory_points_.erase(trajectory_points_.begin() + (int)remove_ids[i] - i);
+	    uuids_.erase(uuids_.begin() + (int)remove_ids[i] - i);
 	  }
 	}
       }
 
-      //ROS_ERROR("pub_tra8");
       if( addRemovePt && points[1].size() < (size_t)MAX_COUNT )
         {
           std::vector<cv::Point2f> tmp;
@@ -256,7 +252,6 @@ class LKFlowNodelet : public nodelet::Nodelet
         }
 
       needToInit = false;
-      //ROS_ERROR("pub_tra7");
       if( debug_view_) {
 
         cv::imshow(window_name_, image);
@@ -281,17 +276,11 @@ class LKFlowNodelet : public nodelet::Nodelet
       std::swap(points[1], points[0]);
       cv::swap(prevGray, gray);
 
-      ROS_ERROR("Trajectory_points2");
-      if((int)trajectory_points_.size() > 0)
-	for(size_t i = 0; i < trajectory_points_.size(); i++)
-	    ROS_ERROR("Trajectory i: %d j: -- tp_size: %d tp[%d]_size: %d ", i,  trajectory_points_.size(), i, trajectory_points_[i].size());
       if(publish_trajectory_){
-	ROS_ERROR("pub_tra3");
 	for(size_t i = 0; i < trajectory_points_.size(); i++){
 	  for(size_t j = 0; j < trajectory_points_[i].size(); j++){
 	    cv::circle( trajectory_image, trajectory_points_[i][j], 3, cv::Scalar(0,255,0), -1, 8);
 	    if (j < ((int)trajectory_points_[i].size() - 2)){
-	      // ROS_ERROR("pub_tra3_33 %d %d %d", j, trajectory_points_[i].size(), trajectory_points_[i].size() - 2);
 	      cv::line( trajectory_image, trajectory_points_[i][j], trajectory_points_[i][j + 1], cv::Scalar(0,255,0), 1, 8, 0);
 	    }
 	  }
